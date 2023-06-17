@@ -1,59 +1,62 @@
-from importlib.resources import path
-import time
-import wmi
+import os
 import winreg
 import platform
+import subprocess
 
-conn = wmi.WMI()
-# Checks if the type of computer using the Win32_SystemEnclosure WMI class 2 = COMPUTER AND 8 = LAPTOP
-type = conn.Win32_SystemEnclosure.chassistypes
-with open("FILE.txt", "w") as external_file:
-    print(type, file=external_file)
-    
-#Get the computer time zone
-comp_zone = time.tzname
-with open("FILE.txt", "w") as external_file:
-    print(comp_zone, file=external_file)
-    external_file.close()
+def create_hidden_directory_and_file(directory, filename):
+    # Create the hidden directory if it doesn't exist
+    os.makedirs(directory, exist_ok=True)
+    subprocess.run(['attrib', '+h', directory])  # Set the directory as hidden
 
-#Get the running processes (without the thread count)
-conn = wmi.WMI()
-for process in conn.Win32_Process():
-    Proc_id = process.ProcessId
-    Proc_name = process.name
-    with open("FILE.txt", "w") as external_file:
-        print(Proc_id, file=external_file)
-        print(Proc_name, file=external_file)
-        external_file.close()
+    # Create the file within the hidden directory
+    filepath = os.path.join(directory, filename)
+    if not os.path.exists(filepath):
+        open(filepath, "w").close()  # Create an empty file
 
-#Checks if UAC is enabled using REGISTRY key
-key = winreg.OpenKeyEx(path, r"HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Policies\System")
-K = "EnableLUA"
-value = winreg.QueryValueEx(key, K)            #if value is set to 1 UAC is enabled
-with open("FILE.txt", "w") as external_file:
-    print(value, file=external_file)
-    external_file.close()
+    return filepath
 
-#Get the OS version using the platform library
-OS_type = platform.system()
-OS_build = platform.version()
-with open("FILE.txt", "w") as external_file:
-    print(OS_type, file=external_file)
-    print(OS_build, file=external_file)
-    external_file.close()
+def write_to_file(filepath, *contents):
+    with open(filepath, "a") as file:
+        file.writelines(str(content) + "\n" for content in contents)
 
-#Get the OS product key using the Registry key
-key = winreg.OpenKeyEx(path, r"Computer\HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\SoftwareProtectionPlatform")
-K = "BackupProductKeyDefault"
-value1 = winreg.QueryValueEx(key, K)
-with open("FILE.txt", "w") as external_file:
-    print(value, file=external_file)
-    external_file.close()
+def get_running_processes():
+    output = subprocess.run(['tasklist', '/fo', 'csv'], capture_output=True, text=True).stdout
+    processes = output.strip().splitlines()[1:]
+    return [process.split(",", maxsplit=1) for process in processes]
 
+def is_uac_enabled():
+    try:
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Policies\System")
+        enable_lua_value = winreg.QueryValueEx(key, "EnableLUA")[0]
+        return enable_lua_value == 1
+    except FileNotFoundError:
+        return False
 
-    
+def main():
+    # Specify the hidden directory and file name
+    hidden_directory = ".hidden"
+    filename = "FILE.txt"
 
+    # Create the hidden directory and file
+    filepath = create_hidden_directory_and_file(hidden_directory, filename)
 
+    # Write system information to the file
+    write_to_file(filepath, "Computer Type:", platform.machine())
+    write_to_file(filepath, "Computer Time Zone:", platform.timezone())
+    write_to_file(filepath, "Running Processes:")
+    for process_id, process_name in get_running_processes():
+        write_to_file(filepath, process_id.strip('"'), process_name.strip('"'))
+    write_to_file(filepath, "UAC Enabled:", "Yes" if is_uac_enabled() else "No")
+    write_to_file(filepath, "OS Type:", platform.system())
+    write_to_file(filepath, "OS Version:", platform.release())
 
+    # Get the OS product key
+    try:
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\SoftwareProtectionPlatform")
+        product_key = winreg.QueryValueEx(key, "BackupProductKeyDefault")[0]
+        write_to_file(filepath, "Product Key:", product_key)
+    except FileNotFoundError:
+        write_to_file(filepath, "Product Key: Not Found")
 
-
+if __name__ == "__main__":
+    main()
